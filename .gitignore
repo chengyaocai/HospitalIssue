@@ -1,0 +1,21 @@
+# 依赖与构建产物
+node_modules/
+frontend/dist/
+frontend/build_once.out
+
+# 运行时数据（本地生成，不入库；含真实问题记录，防止泄露）
+backend/data/
+backend/uploads/
+*.db
+*.sqlite
+
+# 截图与临时文件
+frontend/shots/
+.tmp-*.png
+*.zip
+
+# AI 工作区
+.workbuddy/
+
+# 日志
+*.log
