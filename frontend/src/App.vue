@@ -121,7 +121,7 @@ const NAV_ITEMS = {
 const NAV_GROUPS = [
   { key: 'work',  label: '业务工作', icon: 'group-work',  items: ['dashboard', 'issues', 'audited', 'kb', 'schedule'] },
   { key: 'comms', label: '沟通协作', icon: 'group-comms', items: ['chat', 'notification'] },
-  { key: 'impl',  label: '协同作战', icon: 'group-impl',  items: ['timesheet'] },
+  { key: 'impl',  label: '实施协同', icon: 'group-impl',  items: ['timesheet'] },
   { key: 'sys',   label: '系统管理', icon: 'group-sys',   items: ['users', 'audit', 'settings', 'orgs', 'tsconfig'] },
 ];
 // 组内没有任何可见子项时整组隐藏；子项保持原菜单顺序

@@ -209,7 +209,7 @@ try {
   // v1.18.34：每个界面底部增加版权信息 + 版本号（全局页脚 + 登录页版权条）必须真的编进产物
   assert(jsText.includes('版权所有'), 'JS 产物含「版权所有」文案（页脚版权信息，v1.18.34）');
   assert(jsText.includes('软件问题登记系统'), 'JS 产物含「软件问题登记系统」版权主体名（v1.18.34）');
-  assert(jsText.includes('v1.18.46'), 'JS 产物含版本号 v1.18.46（来自 src/version.js，v1.18.46）');
+  assert(jsText.includes('v1.18.47'), 'JS 产物含版本号 v1.18.47（来自 src/version.js，v1.18.47）');
   // v1.18.41：用户管理「在线」列必须真的编进产物（API 封装 + 在线/离线文案）
   assert(jsText.includes('userPresence'), 'JS 产物含在线状态 API 封装 userPresence（v1.18.41）');
   assert(jsText.includes('在线') && jsText.includes('离线'), 'JS 产物含在线/离线列文案（v1.18.41）');
@@ -241,6 +241,9 @@ try {
   // v1.18.46：工时配置绑定表按用户动态拉取 + 自动匹配 + 服务连接（管理员）卡必须真的编进产物
   assert(jsText.includes('自动匹配') && jsText.includes('系统默认') && jsText.includes('未绑定'),
     'JS 产物含来源四态文案 个人/自动匹配/系统默认/未绑定（v1.18.46）');
+  // v1.18.47：多选筛选勾选即生效（350ms 防抖自动提交 + 清除立即生效）必须真的编进产物
+  assert(jsText.includes('v1.18.47-filter-auto-submit'),
+    'JS 产物含勾选即生效防抖标记（v1.18.47）');
   assert(jsText.includes('服务连接（管理员）') && jsText.includes('更换 Token'),
     'JS 产物含服务连接（管理员）卡与 Token 更新入口（v1.18.46）');
   assert(jsText.includes('tsServerConfig') && jsText.includes('tsUpdateServerToken') && jsText.includes('tsHospitals'),

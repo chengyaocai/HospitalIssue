@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref, onMounted, onUnmounted } from 'vue';
+import { reactive, ref, onMounted, onUnmounted, watch } from 'vue';
 import { STATUSES, TYPES, DEPARTMENTS } from '../api.js';
 
 const props = defineProps({ filters: Object, recycle: Boolean });
@@ -10,6 +10,27 @@ const emit = defineEmits(['filter', 'search', 'toggleRecycle']);
 // 提交给后端的查询串由 qs() 把数组序列化为逗号分隔多值（status=待处理,处理中），
 // 后端 parseQuery 拆分为数组、两个仓储按 IN / includes 过滤；单值查询完全向后兼容。
 const form = reactive({ status: [], type: [], department: [], keyword: '' });
+
+// v1.18.47：勾选即生效 —— checkbox 变更后 350ms 防抖自动提交筛选（Excel 筛选器交互），
+// 「清除」也立即生效；「应用 / 搜索」保留照常工作。
+const MS_FILTER_DEBOUNCE = 350;
+let autoTimer = null;
+function submitNow() {
+  clearTimeout(autoTimer);
+  autoTimer = null;
+  openKey.value = '';
+  emit('filter', { ...form });
+}
+function submitDebounced() {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => {
+    autoTimer = null;
+    emit('filter', { ...form });
+  }, MS_FILTER_DEBOUNCE);
+}
+watch(() => form.status, submitDebounced, { deep: true });
+watch(() => form.type, submitDebounced, { deep: true });
+watch(() => form.department, submitDebounced, { deep: true });
 
 // 三个多选下拉的字段配置（模板里 v-for 渲染同一段结构）
 const MS_FIELDS = [
@@ -34,12 +55,11 @@ function summary(f) {
   return `已选 ${picked.length} 项`;
 }
 
-function clearOne(key) { form[key] = []; }
-function apply() { openKey.value = ''; emit('filter', { ...form }); }
+function clearOne(key) { form[key] = []; submitNow(); }
+function apply() { submitNow(); }
 function reset() {
   form.status = []; form.type = []; form.department = []; form.keyword = '';
-  openKey.value = '';
-  apply();
+  submitNow();
 }
 </script>
 
@@ -52,7 +72,7 @@ function reset() {
           <span class="ms-label">{{ summary(f) }}</span>
           <svg class="ms-chev" :class="{ up: openKey === f.key }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5l6 6 6-6" /></svg>
         </button>
-        <div v-if="openKey === f.key" class="ms-pop">
+        <div v-if="openKey === f.key" class="ms-pop" data-auto-submit="v1.18.47-filter-auto-submit">
           <label v-for="opt in f.options" :key="opt" class="ms-item">
             <input type="checkbox" :value="opt" v-model="form[f.key]">
             <span>{{ opt }}</span>
