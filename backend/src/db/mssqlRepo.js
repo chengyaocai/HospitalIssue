@@ -143,33 +143,33 @@ export function createMssqlRepo(cfg) {
   // 筛选值归一化（v1.18.45 多选）：兼容数组（新）与单字符串（旧），统一为数组（上限 50 防超长）。
   const asMultiArr = (v) => (Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : [])).slice(0, 50);
 
-  // 多值筛选生成 IN 子句：单值仍用「=」走原参数名（旧行为零变化）；
-  // 多值用「@<name><下标>」动态占位（每个值独立注册参数，严禁复用同名参数重复 input）。
-  function multiClause(req, col, name, values, type, size) {
-    if (values.length === 1) {
-      clauses.push(`${col} = @${name}`);
-      req.input(name, size ? type(size) : type(), values[0]);
-      return;
-    }
-    const ph = values.map((_, i) => `@${name}${i}`).join(',');
-    clauses.push(`${col} IN (${ph})`);
-    values.forEach((v, i) => req.input(`${name}${i}`, size ? type(size) : type(), v));
-  }
-
   function buildWhere(req, f = {}) {
     const clauses = [];
+
+    // 多值筛选生成 IN 子句：单值仍用「=」走原参数名（旧行为零变化）；
+    // 多值用「@<name><下标>」动态占位（每个值独立注册参数，严禁复用同名参数重复输入）。
+    function multiClause(col, name, values, type, size) {
+      if (values.length === 1) {
+        clauses.push(`${col} = @${name}`);
+        req.input(name, size ? type(size) : type(), values[0]);
+        return;
+      }
+      const ph = values.map((_, i) => `@${name}${i}`).join(',');
+      clauses.push(`${col} IN (${ph})`);
+      values.forEach((v, i) => req.input(`${name}${i}`, size ? type(size) : type(), v));
+    }
     // 多机构（v1.18）行级隔离：只在显式传入 orgId 时施加，缺省保持旧行为
     if (f.orgId != null) { clauses.push('org_id = @org'); req.input('org', sql.BigInt, f.orgId); }
     // 回收站口径（v1.6）：默认仅未删除记录；f.deleted === true 时仅回收站记录
     if (f.deleted === true) clauses.push('deleted_at IS NOT NULL');
     else clauses.push('deleted_at IS NULL');
     const statusArr = asMultiArr(f.status);
-    if (statusArr.length) multiClause(req, 'status', 'status', statusArr, sql.NVarChar, 20);
+    if (statusArr.length) multiClause('status', 'status', statusArr, sql.NVarChar, 20);
     if (f.auditStatus) { clauses.push('audit_status = @audit_status'); req.input('audit_status', sql.NVarChar(20), f.auditStatus); }
     const typeArr = asMultiArr(f.type);
-    if (typeArr.length) multiClause(req, 'type', 'type', typeArr, sql.NVarChar, 20);
+    if (typeArr.length) multiClause('type', 'type', typeArr, sql.NVarChar, 20);
     const deptArr = asMultiArr(f.department);
-    if (deptArr.length) multiClause(req, 'department', 'department', deptArr, sql.NVarChar, 100);
+    if (deptArr.length) multiClause('department', 'department', deptArr, sql.NVarChar, 100);
     if (f.keyword) {
       clauses.push('(title LIKE @kw OR department LIKE @kw OR reporter LIKE @kw OR description LIKE @kw OR handler LIKE @kw OR registrar LIKE @kw OR softwareSystem LIKE @kw)');
       req.input('kw', sql.NVarChar(255), `%${f.keyword}%`);
