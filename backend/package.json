@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node src/index.js"
+    "dev": "node src/index.js",
+    "start:enc": "node --import ./loader.mjs start-enc.mjs",
+    "encrypt": "node tools/encrypt-src.mjs",
+    "encrypt:purge": "node tools/encrypt-src.mjs --purge",
+    "encrypt:check": "node tools/encrypt-src.mjs --check"
   },
   "dependencies": {
     "cors": "^2.8.5",
