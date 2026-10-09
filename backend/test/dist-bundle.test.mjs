@@ -209,7 +209,7 @@ try {
   // v1.18.34：每个界面底部增加版权信息 + 版本号（全局页脚 + 登录页版权条）必须真的编进产物
   assert(jsText.includes('版权所有'), 'JS 产物含「版权所有」文案（页脚版权信息，v1.18.34）');
   assert(jsText.includes('软件问题登记系统'), 'JS 产物含「软件问题登记系统」版权主体名（v1.18.34）');
-  assert(jsText.includes('v1.18.47'), 'JS 产物含版本号 v1.18.47（来自 src/version.js，v1.18.47）');
+  assert(jsText.includes('v1.18.48'), 'JS 产物含版本号 v1.18.48（来自 src/version.js，v1.18.48）');
   // v1.18.41：用户管理「在线」列必须真的编进产物（API 封装 + 在线/离线文案）
   assert(jsText.includes('userPresence'), 'JS 产物含在线状态 API 封装 userPresence（v1.18.41）');
   assert(jsText.includes('在线') && jsText.includes('离线'), 'JS 产物含在线/离线列文案（v1.18.41）');
@@ -244,6 +244,13 @@ try {
   // v1.18.47：多选筛选勾选即生效（350ms 防抖自动提交 + 清除立即生效）必须真的编进产物
   assert(jsText.includes('v1.18.47-filter-auto-submit'),
     'JS 产物含勾选即生效防抖标记（v1.18.47）');
+  // v1.18.48：登录失效（带 token 的 401）后自动退到登录界面 —— 必须真的编进产物。
+  // 锚点一：Login 根节点的 build marker（与 v1.18.47 的 data-auto-submit 同款约定）；
+  // 锚点二：api.js 在失效时抛出的用户提示文案。两者共同证明「失效→退登录」链路已编入。
+  assert(jsText.includes('v1.18.48-session-expired-redirect'),
+    'JS 产物含登录失效退登录 build 标记（v1.18.48）');
+  assert(jsText.includes('登录已失效，请重新登录'),
+    'JS 产物含登录失效提示文案（v1.18.48）');
   assert(jsText.includes('服务连接（管理员）') && jsText.includes('更换 Token'),
     'JS 产物含服务连接（管理员）卡与 Token 更新入口（v1.18.46）');
   assert(jsText.includes('tsServerConfig') && jsText.includes('tsUpdateServerToken') && jsText.includes('tsHospitals'),

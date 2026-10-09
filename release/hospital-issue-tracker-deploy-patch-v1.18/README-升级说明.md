@@ -67,8 +67,9 @@
 | v1.18.46 | 功能：**工时配置绑定表按登录用户自动获取 + PMIS-MCP Token 界面化维护**——①绑定表不再显示全局固定医院，改按登录用户动态拉取本人 WXP 客户医院，新增「自动匹配」层级（按医院名检索本人 PMIS 在建项目，项目名/客户名包含即命中），优先级 个人 > 自动匹配 > 系统默认 > 未绑定，来源 chip 四态标注、绑定列恒显当前生效值；保存只提交个人维度（自动匹配/系统默认绝不写回）。②新增「服务连接（管理员）」卡（仅平台管理员）：显示 PMIS-MCP 地址与 Token 掩码（前6…后4，永不回显明文），可粘贴新 token 直接更换——写回 `Configs/mcp.json`（自动备份）**即时生效无需重启**；env `PMIS_MCP_TOKEN` 覆盖时显示警告且修改被拒。审计 `UPDATE_TS_TOKEN` 只记长度 | **是（前后端：`timesheet/configs.js` + `routes/timesheet.js` + `services/export.js` + `frontend/dist`）**，覆盖后**必须重启后端** | 否（无新表新列） | 无（绑定表按各登录用户的 WXP 客户动态拉取，个人绑定与系统默认行为不变；Token 过期此后可在界面直接更换） |
 
 | v1.18.47 | 功能增强 + 生产热修：**问题登记多选筛选「勾选即生效」**（纯前端：checkbox 勾选/取消后 350ms 防抖自动提交、清除立即生效，按钮文案与列表恒一致）；**并修复 v1.18.45 引入的生产 mssql 回归**——多值筛选在生产（SQL Server）报 `ReferenceError: clauses is not defined` 致列表 500（dev 测试未暴露）。后端 `db/mssqlRepo.js` 将 `multiClause` 移入 `buildWhere` 闭包 | **是（前后端：`db/mssqlRepo.js` 修复 + `components/FilterBar.vue` + `src/version.js` + `frontend/dist`）**，覆盖后**必须重启后端** | 否（无新表新列） | 无（不勾选=全部，行为与升级前一致；旧前端+新后端完全兼容） |
+| v1.18.48 | 功能增强：**登录失效/过期后自动退到登录界面**——会话期内后端返回「带 token 的 401」（token 过期或被服务端拒绝）时，前端 `api.js` 统一捕获并清空本地 token、置位 `sessionExpired` 信号，`App.vue` 监听到即停止全部轮询、清空登录态并退回登录页（不清除 VIEW_KEY，重登录后回到原菜单）；彻底解决此前「401 只清 token 不跳转、界面假死反复报错」的体验问题 | **否（纯前端：`src/api.js` + `src/authState.js` 新增 + `src/App.vue` + `src/version.js` + `frontend/dist`；后端 `backend/src` 零改动），覆盖 `frontend/dist` 后按 `Ctrl+F5` 即可，无需重启后端** | 否（无新表新列） | 无（旧 token 失效后本就该重登，行为符合预期） |
 
-> **本包当前累计版本为 v1.18.47。**
+> **本包当前累计版本为 v1.18.48。**
 > 单机构部署的界面差异：①（v1.18.9）顶栏右侧多一枚「当前机构 + 机构名」的半透明白只读标签（v1.18.19 起位于**顶栏**而非内容区页眉）；②（v1.18.10）平台管理员的机构内角色恒为「管理员」，用户管理/成员管理里显示为「管理员 · 固定」的说明文字；③（v1.18.12）用户列表多一列「类型」（院方=灰字 / 公司=蓝色 chip）与一个本地筛选标签页（v1.18.15 起由下拉改为二级 sheet 页），新建账号弹框仅平台管理员多一项「用户类型」；④（v1.18.19）**顶栏 + 分组导航改版**：顶栏显示系统名称与用户区（修改密码/退出自侧栏底部迁来），侧栏改三分组折叠导航、子项左对齐。数据、系统名称、菜单项与权限一律不变，存量账号全部自动归为院方用户。上表 v1.18 / v1.18.6 两行中「单机构界面零变化」指的是**那两次改动当时**的情形。
 > ⚠️ **v1.18.12 必须重启后端**（`user_type` 列由启动时自动加列，无需手工改库）。
 > ⚠️ **v1.18.13 必须重启后端**（改了后端路由 `routes/schedules.js`；**无新表新列，无需手工改库**，值班表 `org_id` 列 v1.18 已就位）。
@@ -91,6 +92,7 @@
 > ⚠️ **v1.18.45 必须重启后端**（改了 `routes/problems.js`、`db/devRepo.js`、`db/mssqlRepo.js`、`services/export.js`：筛选接口支持逗号分隔多值，单值行为完全不变，**无新表新列，无需手工改库**。前端按 `Ctrl+F5`；旧前端 + 新后端完全兼容）。
 > ⚠️ **v1.18.46 必须重启后端**（改了 `timesheet/configs.js`、`routes/timesheet.js`、`services/export.js`：绑定表按登录用户动态拉取、新增 `/timesheet/server-config` 两端点，**无新表新列，无需手工改库**。前端按 `Ctrl+F5`。PMIS-MCP Token 此后可在「工时配置 → 服务连接（管理员）」界面直接更换、即时生效；若 `.env` 配置了 `PMIS_MCP_TOKEN` 环境变量则其优先级最高，界面修改不生效，需先移除该变量并重启）。
 > ⚠️ **v1.18.47 必须重启后端**（改了 `db/mssqlRepo.js`：修复 v1.18.45 多值筛选在生产 mssql 报 `ReferenceError: clauses is not defined` 致列表 500 的回归——`multiClause` 原定义在 `buildWhere` 外部、无法访问其内部 `clauses` 变量，已移入 `buildWhere` 内部为闭包。**旧 mssqlRepo 在生产直接崩栈，本包已含修复版**；前端按 `Ctrl+F5`。**请整目录覆盖 `backend/src`**，切忌只覆盖 `frontend/dist` 而保留旧 `mssqlRepo`——否则生产筛选仍会 500）。
+> ⚠️ **v1.18.48 无需重启后端**（纯前端改动：新增 `src/authState.js` 会话失效信号、`src/api.js` 在「带 token 的 401」时清空 token 并置位信号、`src/App.vue` 监听到即退回登录页；后端 `backend/src` 零改动）。**只需覆盖 `frontend/dist` 整个目录并按 `Ctrl+F5`**，切忌误重启后端或漏覆盖 dist——后者会导致生产仍跑旧前端、失效不跳转。
 > ⚠️ **v1.18.10 必须重启后端，且所有账号重新登录一次**（角色写在登录凭证里）。
 
 ## 注意事项

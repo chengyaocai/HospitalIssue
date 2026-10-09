@@ -26,6 +26,7 @@ import TimesheetSettings from './components/TimesheetSettings.vue';
 import { APP_VERSION } from './version.js';
 import { unread, refreshUnread, startUnreadPolling, stopUnreadPolling, clearUnread } from './notifications.js';
 import { unread as chatUnread, startChatPolling, stopChatPolling, refreshUnread as refreshChatUnread, clearUnread as clearChatUnread } from './chat.js';
+import { sessionExpired, resetSessionExpired } from './authState.js';
 
 const appName = ref('医院信息科 · 软件问题登记');
 const view = ref('issues');
@@ -379,6 +380,7 @@ function applyInitialView() {
 
 function onLoggedIn({ token, user, org, orgs: orgList }) {
   setToken(token);
+  resetSessionExpired();   // 重登录清空「失效」信号，避免上一次会话的失效状态串到新会话
   currentUser.value = user;
   currentOrg.value = org || null;
   orgs.value = Array.isArray(orgList) ? orgList : [];
@@ -464,10 +466,26 @@ watch(myPerms, () => {
 });
 
 onMounted(boot);
+
+// v1.18.48：登录失效（api.js 收到「带 token 的 401」）后自动退到登录界面。
+// 监听到信号即停止全部轮询并清空登录态；不清除 VIEW_KEY，重登录后回到原菜单。
+// 信号为「置位一次」语义（ref false→true 才触发），多请求并发 401 只退一次。
+watch(sessionExpired, (fired) => {
+  if (!fired || !currentUser.value) return;
+  resetSessionExpired();
+  stopUnreadPolling();
+  clearUnread();
+  stopChatPolling();
+  clearChatUnread();
+  currentUser.value = null;
+  currentOrg.value = null;
+  orgs.value = [];
+  showLogin.value = true;
+});
 </script>
 
 <template>
-  <Login v-if="showLogin" :app-name="appName" @loggedIn="onLoggedIn" />
+  <Login v-if="showLogin" :app-name="appName" @loggedIn="onLoggedIn" data-session-expired="v1.18.48-session-expired-redirect" />
 
   <div class="layout" v-else>
     <!-- 顶栏（v1.18.19；v1.18.20 品牌语义调整）：左侧品牌名——多机构时显示**当前机构名**

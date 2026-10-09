@@ -1,3 +1,5 @@
+import { raiseSessionExpired } from './authState.js';
+
 export const TYPES = ['故障', '需求', '咨询', '其他'];
 export const SEVERITIES = ['低', '中', '高', '紧急'];
 export const STATUSES = ['待处理', '处理中', '已解决', '已关闭'];
@@ -237,12 +239,34 @@ export function repairNames(value, depth = 0) {
   return value;
 }
 
-async function req(url, opts = {}) {
+// 统一鉴权请求封装：带 Bearer 头；遇 401 清 token 并触发「退回登录」信号（仅对带 token 的请求，避免登录失败误触发）。
+// 返回原始 Response，由调用方按业务解析；blob / 附件下载等不走 JSON 的接口也用它，保证 401 处置一致。
+async function authFetch(url, opts = {}) {
   const res = await fetch(BASE + url, {
     ...opts,
-    headers: authHeaders({ 'Content-Type': 'application/json', ...(opts.headers || {}) }),
+    headers: authHeaders({ ...(opts.headers || {}) }),
   });
-  if (res.status === 401) clearToken();
+  if (res.status === 401) {
+    const hadToken = !!getToken();
+    clearToken();
+    if (hadToken) raiseSessionExpired();
+  }
+  return res;
+}
+
+async function req(url, opts = {}) {
+  const hadToken = !!getToken();
+  const res = await authFetch(url, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+  });
+  if (res.status === 401) {
+    // 带 token 的请求被拒 = 登录失效 / 过期：信号已在 authFetch 内触发，这里给出友好文案；
+    // 不带 token 的 401（如登录失败）沿用后端报错，避免误导。
+    if (hadToken) throw new Error('登录已失效，请重新登录');
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || '请求失败');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || '请求失败');
   return repairNames(data);
@@ -284,13 +308,13 @@ export const api = {
   // 数据驾驶舱：多维度统计
   dashboard: () => req('/problems/dashboard'),
   exportBlob: async (params = {}) => {
-    const res = await fetch(BASE + '/problems/export' + qs(params), { headers: authHeaders() });
+    const res = await authFetch('/problems/export' + qs(params));
     if (!res.ok) throw new Error('导出失败');
     return res.blob();
   },
   // v1.18.24：底稿登记清单导出（审核通过菜单）。空结果时后端 400 带中文 error，透传给界面提示
   exportDraftBlob: async (params = {}) => {
-    const res = await fetch(BASE + '/problems/export-draft' + qs(params), { headers: authHeaders() });
+    const res = await authFetch('/problems/export-draft' + qs(params));
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || '导出失败');
@@ -331,7 +355,7 @@ export const api = {
   // 审计日志（管理员）
   listAudit: (params = {}) => req('/audit' + qs(params)),
   auditExportBlob: async (params = {}) => {
-    const res = await fetch(BASE + '/audit/export' + qs(params), { headers: authHeaders() });
+    const res = await authFetch('/audit/export' + qs(params));
     if (!res.ok) throw new Error('导出失败');
     return res.blob();
   },
@@ -340,9 +364,8 @@ export const api = {
   uploadAttachment: async (id, file) => {
     const fd = new FormData();
     fd.append('file', file);
-    const res = await fetch(`${BASE}/problems/${id}/attachments`, {
+    const res = await authFetch(`/problems/${id}/attachments`, {
       method: 'POST',
-      headers: authHeaders(),
       body: fd,
     });
     const data = await res.json().catch(() => ({}));
@@ -353,12 +376,12 @@ export const api = {
     req(`/problems/${id}/attachments/${fileId}`, { method: 'DELETE' }),
   // 取回附件二进制（供详情抽屉在线预览：blob → objectURL，浏览器内存中展示，不落盘）
   fetchAttachmentBlob: async (id, fileId) => {
-    const res = await fetch(`${BASE}/problems/${id}/attachments/${fileId}`, { headers: authHeaders() });
+    const res = await authFetch(`/problems/${id}/attachments/${fileId}`);
     if (!res.ok) throw new Error('附件加载失败');
     return res.blob();
   },
   downloadAttachment: async (id, fileId, filename) => {
-    const res = await fetch(`${BASE}/problems/${id}/attachments/${fileId}`, { headers: authHeaders() });
+    const res = await authFetch(`/problems/${id}/attachments/${fileId}`);
     if (!res.ok) throw new Error('下载失败');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -392,9 +415,8 @@ export const api = {
   uploadChatAttachment: async (id, file) => {
     const fd = new FormData();
     fd.append('file', file);
-    const res = await fetch(`${BASE}/chat/conversations/${id}/attachments`, {
+    const res = await authFetch(`/chat/conversations/${id}/attachments`, {
       method: 'POST',
-      headers: authHeaders(),
       body: fd,
     });
     const data = await res.json().catch(() => ({}));
@@ -402,12 +424,12 @@ export const api = {
     return repairNames(data);
   },
   chatAttachmentBlob: async (storedName) => {
-    const res = await fetch(`${BASE}/chat/attachments/${encodeURIComponent(storedName)}`, { headers: authHeaders() });
+    const res = await authFetch(`/chat/attachments/${encodeURIComponent(storedName)}`);
     if (!res.ok) throw new Error('附件加载失败');
     return res.blob();
   },
   downloadChatAttachment: async (storedName, filename) => {
-    const res = await fetch(`${BASE}/chat/attachments/${encodeURIComponent(storedName)}?download=1`, { headers: authHeaders() });
+    const res = await authFetch(`/chat/attachments/${encodeURIComponent(storedName)}?download=1`);
     if (!res.ok) throw new Error('下载失败');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
