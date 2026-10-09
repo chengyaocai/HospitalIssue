@@ -37,7 +37,7 @@ function walk(dir) {
     const plain = fs.readFileSync(p);
     fs.writeFileSync(enc, encryptSource(plain, key));
     count++;
-    if (mode === 'purge') fs.rmSync(p);
+    if (mode === 'purge' && fs.existsSync(p)) fs.rmSync(p);
   }
 }
 

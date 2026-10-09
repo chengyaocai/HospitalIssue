@@ -50,3 +50,20 @@
 
 ## 五、回退
 若加密后异常，可用开发机上的明文备份覆盖 `backend/src/*.js`，或保留的明文未被 `--purge` 删除时直接 `node backend/start3000.mjs` 明文启动。
+
+## 六、一键加密部署脚本（推荐现场使用）
+补丁包根目录附带 **`deploy-encrypted.bat` / `deploy-encrypted.ps1`**，把「覆盖补丁 → 本机加密并删除明文 → 注册 Windows 服务以加密态自启」三步合并，减少现场手工出错。
+
+### 前置（仅需一次）
+- 把 **`nssm.exe`** 放进补丁包的 **`tools\nssm.exe`**（下载：https://nssm.cc ）。nssm 是把 Node 进程注册成真正 Windows 服务的单文件工具。
+- 目标服务器上已有常规部署（含 `runtime\node.exe`），且 Node **≥ 20.6**。
+
+### 用法
+- 右键 **`deploy-encrypted.bat` → 以管理员身份运行**，按提示输入安装目录；或显式指定：
+  ```powershell
+  powershell -File .\deploy-encrypted.ps1 -InstallDir "D:\hospital-issue" -Port 3000
+  ```
+- 常用参数：`-ServiceName`（默认 `HospitalIssueTracker`）、`-Port`（默认 3000）、`-SkipService`（只加密不注册服务）、`-DryRun`（只打印不改动，先用它核对路径）。
+- 脚本行为：① `robocopy` 覆盖 `backend/`（不 purge 目标多余文件）与 `frontend/dist`（purge 旧 bundle）；② 若仍见明文 `.js` 则本机 `encrypt-src.mjs --purge`；③ 用 nssm 注册服务，启动参数 `--import ./loader.mjs start-enc.mjs`，自动启动并 `curl /api/config` 健康检查。
+- 幂等：重复运行安全（`--purge` 对已加密目录自动跳过；服务先停后装）。
+- ⚠️ 加密**绑定本机指纹**：换机器 / 重装系统后该目录的 `.enc` 无法在别的机器启动，需在新机器上重新跑本脚本加密。
