@@ -64,6 +64,7 @@
   powershell -File .\deploy-encrypted.ps1 -InstallDir "D:\hospital-issue" -Port 3000
   ```
 - 常用参数：`-ServiceName`（默认 `HospitalIssueTracker`）、`-Port`（默认 3000）、`-SkipService`（只加密不注册服务）、`-DryRun`（只打印不改动，先用它核对路径）。
-- 脚本行为：① `robocopy` 覆盖 `backend/`（不 purge 目标多余文件）与 `frontend/dist`（purge 旧 bundle）；② 若仍见明文 `.js` 则本机 `encrypt-src.mjs --purge`；③ 用 nssm 注册服务，启动参数 `--import ./loader.mjs start-enc.mjs`，自动启动并 `curl /api/config` 健康检查。
+- 脚本行为：① `robocopy` 覆盖 `backend/`（不 purge 目标多余文件）与 `frontend/dist`（purge 旧 bundle）；② 同步更新安装根目录的 `run-server.bat`（已支持加密态自动识别）；③ 若仍见明文 `.js` 则本机 `encrypt-src.mjs --purge`；④ 用 nssm 注册服务，启动参数 `--import ./loader.mjs start-enc.mjs`，自动启动并 `curl /api/config` 健康检查。
+- 加密部署后亦可直接双击 `run-server.bat` 手动启动；它会自动检测：若存在 `src\index.js.enc` 且无 `src\index.js`，则用 `--import ./loader.mjs start-enc.mjs` 启动，否则走原明文启动。
 - 幂等：重复运行安全（`--purge` 对已加密目录自动跳过；服务先停后装）。
 - ⚠️ 加密**绑定本机指纹**：换机器 / 重装系统后该目录的 `.enc` 无法在别的机器启动，需在新机器上重新跑本脚本加密。

@@ -36,7 +36,14 @@ echo [启动] 正在启动后端服务，启动成功的标志是下方出现：
 echo        "[issue-tracker] listening on http://localhost:3000"
 echo.
 cd backend
-..\runtime\node.exe src\index.js
+set _enc=0
+if exist "src\index.js.enc" if not exist "src\index.js" set _enc=1
+if %_enc%==1 (
+    echo [switch] Encrypted source detected, booting with loader...
+    ..\runtime\node.exe --import ./loader.mjs start-enc.mjs
+) else (
+    ..\runtime\node.exe src\index.js
+)
 
 echo.
 color 0C
