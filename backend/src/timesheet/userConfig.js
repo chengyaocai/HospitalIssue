@@ -1,8 +1,10 @@
 // 按用户隔离的工时配置（v1.18.43）：每个公司用户登录「工时配置」界面维护自己的记录。
 //   我的 WXP 账号（工号 + 密码，明文存——与既有 wxp.json 现状一致，密码接口层永不回显）
+//   我的 PMIS-MCP token 令牌（v1.18.49）：配置后本人所有 PMIS 调用走自己的 token（覆盖全局 mcp.json）
 //   填报默认值（类型 / 费用条线 / 工序 / 默认工时）
+//   我的常用工时内容（v1.18.49）：个人维度内容池，随机填充优先用个人池，空则回落全局知识库
 //   医院 → 在建项目绑定（个人维度；覆盖全局 Configs/timesheet.json 的同名绑定，未配置的医院回落全局）
-// 存储键 = 用户账号（username；dev）或 user_id（mssql）。知识库保持全局共享（常用语库非个人配置）。
+// 存储键 = 用户账号（username；dev）或 user_id（mssql）。全局知识库保持共享。
 // dev 驱动：data/timesheet-user.json（map: username -> cfg）；生产：表 app_user_ts_config（user_id PK）。
 
 import fs from 'node:fs';
@@ -11,12 +13,26 @@ import sql from 'mssql';
 import { config } from '../config.js';
 
 const DEFAULTS_KEYS = ['timesheetType', 'costLineId', 'processType', 'workHours'];
+const MAX_CONTENTS = 100; // 个人常用内容上限
+
+function normToken(t) {
+  return String(t || '').trim().replace(/^Bearer\s+/i, '').slice(0, 500);
+}
 
 function sanitize(raw) {
   const c = raw && typeof raw === 'object' ? raw : {};
-  const out = { wxpUserCode: '', wxpPassword: '', defaults: {}, bindings: {} };
+  const out = { wxpUserCode: '', wxpPassword: '', pmisToken: '', contents: [], kbMode: 'all', defaults: {}, bindings: {} };
   if (typeof c.wxpUserCode === 'string') out.wxpUserCode = c.wxpUserCode.trim().slice(0, 50);
   if (typeof c.wxpPassword === 'string') out.wxpPassword = c.wxpPassword.slice(0, 100);
+  if (typeof c.pmisToken === 'string') out.pmisToken = normToken(c.pmisToken);
+  // 知识库加载模式：'all' = 个人内容池 + 全局知识库（默认）；'personal' = 仅个人内容池
+  out.kbMode = c.kbMode === 'personal' ? 'personal' : 'all';
+  if (Array.isArray(c.contents)) {
+    out.contents = c.contents
+      .filter((x) => typeof x === 'string' && x.trim())
+      .map((x) => x.trim().slice(0, 500))
+      .slice(0, MAX_CONTENTS);
+  }
   for (const k of DEFAULTS_KEYS) {
     const v = Number(c.defaults?.[k]);
     if (Number.isFinite(v) && v >= 0) out.defaults[k] = v;
@@ -120,6 +136,20 @@ export async function saveUserTsConfig({ userId, username }, patch) {
   const next = sanitize(cur);
   if (typeof patch.wxpUserCode === 'string') next.wxpUserCode = patch.wxpUserCode.trim().slice(0, 50);
   if (typeof patch.wxpPassword === 'string' && patch.wxpPassword !== '') next.wxpPassword = patch.wxpPassword.slice(0, 100);
+  // 个人 PMIS-MCP token：undefined/缺省 = 保留；'' 或 null = 清除（回落全局 mcp.json）；非空 = 设置
+  if (typeof patch.pmisToken === 'string') next.pmisToken = normToken(patch.pmisToken);
+  else if (patch.pmisToken === null) next.pmisToken = '';
+  // 个人常用工时内容：传数组 = 全量替换（去空去重，截断 500 字，上限 100 条）
+  if (Array.isArray(patch.contents)) {
+    const seen = new Set();
+    next.contents = patch.contents
+      .filter((x) => typeof x === 'string' && x.trim())
+      .map((x) => x.trim().slice(0, 500))
+      .filter((x) => (seen.has(x) ? false : (seen.add(x), true)))
+      .slice(0, MAX_CONTENTS);
+  }
+  // 知识库加载模式：仅接受 'personal' / 'all'，其他值忽略保留原值
+  if (patch.kbMode === 'personal' || patch.kbMode === 'all') next.kbMode = patch.kbMode;
   if (patch.defaults && typeof patch.defaults === 'object') {
     for (const k of DEFAULTS_KEYS) {
       const v = Number(patch.defaults[k]);
@@ -150,12 +180,15 @@ export async function saveUserTsConfig({ userId, username }, patch) {
   return sanitize(next);
 }
 
-/** 对外形态：密码永不回显（只给 hasPassword） */
+/** 对外形态：密码 / token 永不回显（只给 hasPassword / hasToken）；contents 回显全文 */
 export function publicTsConfig(cfg) {
   if (!cfg) return null;
   return {
     wxpUserCode: cfg.wxpUserCode || '',
     hasPassword: Boolean(cfg.wxpPassword),
+    hasToken: Boolean(cfg.pmisToken),
+    contents: [...(cfg.contents || [])],
+    kbMode: cfg.kbMode === 'personal' ? 'personal' : 'all',
     defaults: { ...(cfg.defaults || {}) },
     bindings: { ...(cfg.bindings || {}) },
     updatedAt: cfg.updatedAt || null,

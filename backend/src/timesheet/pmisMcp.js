@@ -4,13 +4,25 @@
 // CSV 链路：content[0].text 前段（到 \n\n 为止）是 JSON summary，取 files[].download_url 下载
 // UTF-8 BOM CSV → 逗号切分成行字典；无 download_url（提交类）→ [{raw:text}]。
 // 与 C# 版差异：不再回写 auth.json（本系统没有外部 AI agent 消费它）。
+// v1.18.49：全链路支持 authOverride（个人 PMIS-MCP token，工时配置里按用户维护）——
+//   个人 token 优先覆盖全局 mcp.json 的 Authorization；不传/空 = 行为与旧版完全一致。
 
 import { getMcpServer } from './configs.js';
 
 let mcpIdSeq = 0;
 
-function jsonHeaders(mcp) {
-  return { Accept: 'application/json', 'Content-Type': 'application/json', ...mcp.headers };
+/** 归一个人 token 覆盖：空 = 不覆盖（用全局 mcp.json）；裸 token 自动补 Bearer 前缀 */
+function normAuth(authOverride) {
+  const t = String(authOverride ?? '').trim();
+  if (!t) return null;
+  return /^Bearer\s+/i.test(t) ? t : `Bearer ${t}`;
+}
+
+/** 请求头：authOverride 非空时覆盖全局 Authorization（个人 token 优先） */
+function jsonHeaders(mcp, authOverride) {
+  const base = { Accept: 'application/json', 'Content-Type': 'application/json', ...mcp.headers };
+  const auth = normAuth(authOverride);
+  return auth ? { ...base, Authorization: auth } : base;
 }
 
 async function postJson(url, body, headers, timeoutMs) {
@@ -26,7 +38,7 @@ async function postJson(url, body, headers, timeoutMs) {
 }
 
 /** 调 MCP 工具；返回 { ok, result, errorText }（ok=false 时 errorText 给出可读原因） */
-async function mcpCallTool(name, args, timeoutMs = 30000) {
+async function mcpCallTool(name, args, timeoutMs = 30000, authOverride = null) {
   const mcp = getMcpServer();
   if (!mcp.url) return { ok: false, errorText: 'PMIS-MCP 未配置（Configs/mcp.json 里需要 PMIS-MCP server）' };
   const callObj = {
@@ -37,7 +49,7 @@ async function mcpCallTool(name, args, timeoutMs = 30000) {
   };
   let resp;
   try {
-    resp = await postJson(mcp.url, callObj, jsonHeaders(mcp), timeoutMs);
+    resp = await postJson(mcp.url, callObj, jsonHeaders(mcp, authOverride), timeoutMs);
   } catch (err) {
     const reason = err?.name === 'AbortError' ? `请求超时（${Math.round(timeoutMs / 1000)}s）` : String(err?.message || err);
     return { ok: false, errorText: `PMIS-MCP 连接失败：${reason}` };
@@ -69,10 +81,11 @@ async function mcpCallTool(name, args, timeoutMs = 30000) {
 
 /**
  * 调 get_user_token：验证 MCP 连接有效并取当前 PMIS 用户。
+ * authOverride：个人 token（工时配置里维护）——传入时取的是「该 token 对应的 PMIS 用户」。
  * 返回 { authExpired, errorMessage, userId, token, username }
  */
-export async function getAndRefreshPmisToken() {
-  const r = await mcpCallTool('get_user_token', {});
+export async function getAndRefreshPmisToken(authOverride = null) {
+  const r = await mcpCallTool('get_user_token', {}, 30000, authOverride);
   if (!r.ok) return { authExpired: true, errorMessage: r.errorText, userId: null };
   const text = typeof r.result.content[0]?.text === 'string' ? r.result.content[0].text : '';
   if (!text.trim() || (text.trim()[0] !== '{' && text.trim()[0] !== '[')) {
@@ -92,9 +105,9 @@ export async function getAndRefreshPmisToken() {
   return { authExpired: false, errorMessage: null, userId, token, username };
 }
 
-/** 取当前 PMIS 用户 ID（复用 get_user_token） */
-export async function getPmisUserId() {
-  const r = await getAndRefreshPmisToken();
+/** 取当前 PMIS 用户 ID（复用 get_user_token；个人 token 优先） */
+export async function getPmisUserId(authOverride = null) {
+  const r = await getAndRefreshPmisToken(authOverride);
   return r.authExpired ? null : r.userId;
 }
 
@@ -114,10 +127,10 @@ function parseCsvRows(csvText) {
   return rows;
 }
 
-async function doCallPmisApi(apiId, bodyObj) {
+async function doCallPmisApi(apiId, bodyObj, authOverride = null) {
   const mcp = getMcpServer();
   const args = { api_id: apiId, body: JSON.stringify(bodyObj) };
-  const r = await mcpCallTool('call_api', args, 60000);
+  const r = await mcpCallTool('call_api', args, 60000, authOverride);
   if (!r.ok) return { rows: [], error: r.errorText };
 
   const text = typeof r.result.content[0]?.text === 'string' ? r.result.content[0].text : '';
@@ -141,12 +154,15 @@ async function doCallPmisApi(apiId, bodyObj) {
     return { rows: [{ raw: text }], error: null };
   }
 
-  // 下载 CSV（带相同 Authorization）
+  // 下载 CSV（带相同 Authorization；个人 token 优先覆盖全局）
+  const dlHeaders = { Accept: '*/*', ...mcp.headers };
+  const ovr = normAuth(authOverride);
+  if (ovr) dlHeaders.Authorization = ovr;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   let csvText;
   try {
-    const dl = await fetch(downloadUrl, { headers: { Accept: '*/*', ...mcp.headers }, signal: ctrl.signal });
+    const dl = await fetch(downloadUrl, { headers: dlHeaders, signal: ctrl.signal });
     if (!dl.ok) return { rows: [], error: `CSV 下载失败: HTTP ${dl.status}` };
     csvText = await dl.text();
   } catch (err) {
@@ -161,16 +177,17 @@ async function doCallPmisApi(apiId, bodyObj) {
 
 /**
  * 通过 MCP 调 PMIS API。先 get_user_token 健康检查（失败等 1s 重试一次），再 call_api。
+ * authOverride：个人 token（工时配置里维护）——传入时整条链路走该 token 对应的 PMIS 账号。
  * 返回 { rows, error } —— error 非 null 时 rows 为空。
  */
-export async function callPmisApi(apiId, bodyObj) {
-  let check = await getAndRefreshPmisToken();
+export async function callPmisApi(apiId, bodyObj, authOverride = null) {
+  let check = await getAndRefreshPmisToken(authOverride);
   if (check.authExpired) {
     await new Promise((r) => setTimeout(r, 1000)); // 等 1 秒让 MCP 服务端刷新
-    check = await getAndRefreshPmisToken();
+    check = await getAndRefreshPmisToken(authOverride);
   }
   if (check.authExpired) {
     return { rows: [], error: `PMIS-MCP 鉴权失败：${check.errorMessage || 'token 过期，PMIS 重新登录后再来'}` };
   }
-  return doCallPmisApi(apiId, bodyObj);
+  return doCallPmisApi(apiId, bodyObj, authOverride);
 }

@@ -26,9 +26,13 @@ export function createMssqlUserStore(cfg) {
           is_platform_admin BIT NOT NULL DEFAULT 0,
           user_type NVARCHAR(16) NOT NULL DEFAULT N'hospital',
           phone NVARCHAR(20) NULL,
+          last_login_at DATETIME NULL,
           password NVARCHAR(200) NOT NULL,
           created_at DATETIME NOT NULL DEFAULT GETDATE()
         );
+        -- 新建表后同样补齐增量列（避免 CREATE 分支漏列的字段永远加不上）
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.app_user') AND name = N'last_login_at')
+          ALTER TABLE dbo.app_user ADD last_login_at DATETIME NULL;
       END
       ELSE
       BEGIN

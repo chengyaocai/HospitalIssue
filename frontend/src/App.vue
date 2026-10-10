@@ -646,7 +646,7 @@ watch(sessionExpired, (fired) => {
       <DutyRoster v-if="view === 'schedule'" :can-manage="can('schedule.manage')" :can-platform-admin="currentUser?.platformAdmin === true" />
       <Audited v-if="view === 'audited'" :can-audit="can('issue.audit')" @view="openDetail" />
       <KnowledgeBase v-if="view === 'kb'" />
-      <Timesheet v-if="view === 'timesheet'" />
+      <Timesheet v-if="view === 'timesheet'" @go-config="view = 'tsconfig'" />
       <TimesheetSettings v-if="view === 'tsconfig'" />
       <Chat v-if="view === 'chat'" :current-user="currentUser" :can-use="can('chat.use')" :can-view-issues="canView('issues')" @open-issue="openIssueFromChat" />
       <UserManage

@@ -7,6 +7,9 @@
 import { ref, computed, onMounted } from 'vue';
 import { api } from '../api.js';
 
+// 「⚙ 配置」按钮 → 跳转左侧菜单「工时配置」页（App.vue 接收后切 view）
+const emit = defineEmits(['go-config']);
+
 // —— 配置与字典 ——
 const cfg = ref(null);
 const cfgError = ref('');
@@ -59,6 +62,15 @@ const kbItems = ref([]);
 const kbTotal = ref(0);
 const kbInput = ref('');
 const kbBusy = ref(false);
+// 知识库加载模式（工时配置里设置）：all = 个人内容池+全局知识库；personal = 仅个人内容池。随机填充取词范围
+const kbMode = ref('all');
+// 随机填充条数（单日 / 批量模式共用），1~10
+const randomCount = ref(1);
+// 个人内容池（存在本人工时配置 contents 里，仅本人可用）；管理弹框双 Tab：个人内容池 / 系统知识库
+const kbTab = ref('mine');
+const mineItems = ref([]);
+const mineInput = ref('');
+const mineTotal = computed(() => mineItems.value.length);
 
 // —— toast（自包含，参照 Chat.vue 简易实现）——
 const toast = ref({ show: false, text: '', kind: 'info' });
@@ -94,6 +106,7 @@ async function loadConfig() {
   try {
     const d = await api.tsConfig();
     cfg.value = d;
+    kbMode.value = d.kbMode === 'personal' ? 'personal' : 'all';
     form.value.type = d.defaultTimesheetType ?? 2;
     form.value.cost = d.defaultCostLineId ?? 2;
     form.value.process = d.defaultProcessType ?? 62;
@@ -173,6 +186,17 @@ async function queryUnfilled() {
 async function selectDate(dateStr) {
   selectedDate.value = dateStr;
   form.value.workDate = dateStr;
+  // 全部医院模式下：日期带入批量填报日期并自动重新分析
+  if (mode.value === 'all') {
+    allDate.value = dateStr;
+    await loadAllDrafts();
+    return;
+  }
+  // 单日模式：未选医院时自动选第一家，保证点日期即联动右侧加载工时
+  if (!selHospital.value && hospitals.value.length) {
+    selHospitalId.value = hospitals.value[0].hospitalId;
+    onHospitalChange();
+  }
   await loadDrafts(dateStr);
 }
 
@@ -200,6 +224,38 @@ async function loadDrafts(dateStr) {
 
 function addAiTag() {
   if (!workContent.value.startsWith('【AI工时】')) workContent.value = '【AI工时】\n' + workContent.value;
+}
+
+// 随机填充：按个人「知识库加载模式」（工时配置里设置）从 /contents-random 取 N 条填入工作内容
+//   all = 个人内容池 + 全局知识库；personal = 仅个人内容池。已有内容时追加换行，不覆盖。
+//   默认补加【AI工时】标记（已有则不重复加）
+async function randomFillText(current, count = 1) {
+  const n = Math.max(1, Math.min(parseInt(count, 10) || 1, 10));
+  const d = await api.tsContentsRandom(n);
+  if (!d.success) { showToast(d.message || '随机取词失败', 'danger'); return null; }
+  const items = d.items || [];
+  if (!items.length) {
+    showToast(d.mode === 'personal'
+      ? '当前为「个人」模式且个人内容池为空：可到工时配置切回「全部」，或添加个人常用内容'
+      : '知识库和个人内容池都是空的：先到「工时工作知识库 → 管理」添加几条', 'warn');
+    return null;
+  }
+  const cur = String(current || '').trim();
+  let next = cur ? cur + '\n' + items.join('\n') : items.join('\n');
+  if (!next.startsWith('【AI工时】')) next = '【AI工时】\n' + next;
+  return next;
+}
+async function randomFill() {
+  try {
+    const next = await randomFillText(workContent.value, randomCount.value);
+    if (next !== null) workContent.value = next;
+  } catch (e) { showToast('随机取词失败：' + (e.message || e), 'danger'); }
+}
+async function randomFillRow(r) {
+  try {
+    const next = await randomFillText(r.workContent, randomCount.value);
+    if (next !== null) r.workContent = next;
+  } catch (e) { showToast('随机取词失败：' + (e.message || e), 'danger'); }
 }
 
 function buildEntry() {
@@ -365,12 +421,34 @@ async function openKb() {
 async function kbLoad() {
   kbBusy.value = true;
   try {
-    const d = await api.tsKb();
-    kbTotal.value = d.total || 0;
-    kbItems.value = d.items || [];
+    const [mine, glob] = await Promise.all([api.tsMyConfig(), api.tsKb()]);
+    mineItems.value = mine.config?.contents || [];
+    kbTotal.value = glob.total || 0;
+    kbItems.value = glob.items || [];
   } catch (e) { showToast('知识库加载失败：' + e.message, 'danger'); }
   finally { kbBusy.value = false; }
 }
+// —— 个人内容池：存本人配置 contents（后端去空去重、截断 500 字、上限 100 条）——
+async function mineSave(next) {
+  kbBusy.value = true;
+  try {
+    const d = await api.tsSaveMyConfig({ contents: next });
+    if (d.success) { mineItems.value = d.config?.contents || next; showToast('已保存到个人内容池', 'success'); }
+    else showToast('保存失败：' + (d.message || ''), 'danger');
+  } catch (e) { showToast('保存失败：' + e.message, 'danger'); }
+  finally { kbBusy.value = false; }
+}
+async function mineAdd() {
+  const v = mineInput.value.trim();
+  if (!v) { showToast('请输入内容', 'warn'); return; }
+  if (mineItems.value.includes(v)) { showToast('这条已在个人内容池里', 'warn'); return; }
+  await mineSave([...mineItems.value, v]);
+  mineInput.value = '';
+}
+async function mineDelete(idx) {
+  await mineSave(mineItems.value.filter((_, i) => i !== idx));
+}
+// —— 系统知识库（全局共享，Configs/timesheet-kb.json）——
 async function kbAdd() {
   const v = kbInput.value.trim();
   if (!v) { showToast('请输入内容', 'warn'); return; }
@@ -390,6 +468,10 @@ async function kbDelete(idx) {
 
 onMounted(async () => {
   await Promise.all([loadConfig(), loadHospitals()]);
+  // 默认进入「全部医院批量填报」模式并自动分析；同时按本周查询未填报日期
+  quickRange('week');
+  queryUnfilled();
+  enterAllMode();
 });
 </script>
 
@@ -406,7 +488,9 @@ onMounted(async () => {
       <!-- 左栏 -->
       <aside class="ts-left">
         <div class="card">
-          <div class="card-title">医院</div>
+          <div class="card-title">医院
+            <button class="btn ghost cfg-btn" style="margin-left:auto" title="打开工时配置（WXP 账号 / 默认值 / 医院绑定 / 内容池）" @click="emit('go-config')">⚙ 配置</button>
+          </div>
           <select v-model="selHospitalId" class="ipt" @change="onHospitalChange">
             <option value="" disabled>{{ hospLoading ? '加载中...' : '请选择医院' }}</option>
             <option v-for="h in hospitals" :key="h.hospitalId" :value="h.hospitalId">
@@ -451,7 +535,7 @@ onMounted(async () => {
 
         <div class="card">
           <div class="card-title">工时工作知识库 <button class="btn ghost" style="margin-left:auto" @click="openKb">管理</button></div>
-          <div class="muted small">共 {{ kbTotal }} 条常用工作内容</div>
+          <div class="muted small">随机取词：{{ kbMode === 'personal' ? '个人（仅个人内容池）' : '全部（个人 + 全局）' }} · 个人 {{ mineTotal }} 条 / 系统 {{ kbTotal }} 条</div>
         </div>
       </aside>
 
@@ -519,6 +603,8 @@ onMounted(async () => {
             <div class="card-title">底稿统计 &amp; 工作内容
               <span v-if="draftsLoading" class="muted small">加载底稿中...</span>
               <button class="btn ghost" style="margin-left:auto" :disabled="draftsLoading || !form.workDate" @click="loadDrafts(form.workDate)">✨ AI 自动生成</button>
+              <button class="btn ghost" @click="randomFill">🎲 随机填充 {{ Math.max(1, Math.min(randomCount || 1, 10)) }} 条</button>
+              <input v-model.number="randomCount" type="number" min="1" max="10" class="ipt rnd-count" title="随机填充条数（1~10）">
               <button class="btn ghost" @click="addAiTag">＋【AI工时】</button>
             </div>
             <div class="stats">
@@ -610,7 +696,12 @@ onMounted(async () => {
                     <div class="meta">{{ d.meta }}</div>
                   </div>
                 </div>
-                <textarea v-model="r.workContent" class="ipt ta" style="min-height:80px;margin-top:6px"></textarea>
+                <div class="row2" style="margin-top:6px;align-items:center">
+                  <span class="lbl" style="flex:1"><i class="req">*</i> 工作内容</span>
+                  <button class="btn ghost small" @click="randomFillRow(r)">🎲 随机填充 {{ Math.max(1, Math.min(randomCount || 1, 10)) }} 条</button>
+                  <input v-model.number="randomCount" type="number" min="1" max="10" class="ipt rnd-count" title="随机填充条数（1~10）">
+                </div>
+                <textarea v-model="r.workContent" class="ipt ta" style="min-height:160px;margin-top:6px"></textarea>
               </div>
             </div>
           </div>
@@ -618,20 +709,42 @@ onMounted(async () => {
       </section>
     </div>
 
-    <!-- 知识库弹框 -->
+    <!-- 知识库弹框：双 Tab（个人内容池 = 仅本人随机取词；系统知识库 = 全局共享） -->
     <div v-if="kbOpen" class="modal-mask" @click.self="kbOpen = false">
       <div class="modal">
-        <div class="modal-head"><b>📖 工时工作知识库（{{ kbTotal }}）</b><button class="btn ghost" @click="kbOpen = false">✕</button></div>
+        <div class="modal-head">
+          <b>📖 工时内容库管理</b>
+          <span class="row2" style="margin-left:12px;gap:0">
+            <button class="btn small" :class="kbTab === 'mine' ? 'primary' : 'ghost'" @click="kbTab = 'mine'">个人内容池（{{ mineTotal }}）</button>
+            <button class="btn small" :class="kbTab === 'sys' ? 'primary' : 'ghost'" @click="kbTab = 'sys'">系统知识库（{{ kbTotal }}）</button>
+          </span>
+          <button class="btn ghost" style="margin-left:auto" @click="kbOpen = false">✕</button>
+        </div>
         <div class="modal-body">
-          <div class="row2" style="margin-bottom:10px">
-            <input v-model="kbInput" class="ipt" placeholder="添加一条常用工作内容，如「HIS 系统日常巡检与用户支持」" @keyup.enter="kbAdd">
-            <button class="btn primary" :disabled="kbBusy" @click="kbAdd">添加</button>
-          </div>
-          <div v-if="!kbItems.length" class="empty">知识库为空，添加几条常用工作内容吧（存在 WXP 系统本地）</div>
-          <div v-for="(t, i) in kbItems" :key="i" class="kb-row">
-            <span class="kb-text">{{ t }}</span>
-            <button class="btn ghost danger" @click="kbDelete(i)">✕</button>
-          </div>
+          <template v-if="kbTab === 'mine'">
+            <div class="row2" style="margin-bottom:10px">
+              <input v-model="mineInput" class="ipt" placeholder="添加一条你自己的常用工作内容，回车或点「添加」" @keyup.enter="mineAdd">
+              <button class="btn primary" :disabled="kbBusy" @click="mineAdd">添加</button>
+            </div>
+            <div class="muted small" style="margin-bottom:8px">个人内容池仅<strong>本人登录</strong>可用；「知识库加载模式 = 个人」时随机填充只从这里取词，「全部」模式 = 个人 + 系统知识库。上限 100 条。</div>
+            <div v-if="!mineItems.length" class="empty">个人内容池为空，添加几条你的常用工作内容吧</div>
+            <div v-for="(t, i) in mineItems" :key="i" class="kb-row">
+              <span class="kb-text">{{ t }}</span>
+              <button class="btn ghost danger" :disabled="kbBusy" @click="mineDelete(i)">✕</button>
+            </div>
+          </template>
+          <template v-else>
+            <div class="row2" style="margin-bottom:10px">
+              <input v-model="kbInput" class="ipt" placeholder="添加一条系统级常用工作内容（所有同事共享）" @keyup.enter="kbAdd">
+              <button class="btn primary" :disabled="kbBusy" @click="kbAdd">添加</button>
+            </div>
+            <div class="muted small" style="margin-bottom:8px">系统知识库<strong>全员共享</strong>，这里的内容所有人随机取词都能用到。</div>
+            <div v-if="!kbItems.length" class="empty">系统知识库为空</div>
+            <div v-for="(t, i) in kbItems" :key="i" class="kb-row">
+              <span class="kb-text">{{ t }}</span>
+              <button class="btn ghost danger" @click="kbDelete(i)">✕</button>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -650,6 +763,10 @@ onMounted(async () => {
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); padding: 12px 14px; }
 .card.grow { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .card-title { font-size: 13px; font-weight: 650; color: var(--text); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+/* 随机填充条数输入框（卡片标题栏内，紧凑小号；覆盖 .ipt 的 width:100% 防拉伸） */
+.rnd-count { width: 58px !important; flex: 0 0 58px; padding: 4px 6px; font-size: 12px; text-align: center; }
+/* 「医院」卡片标题旁的配置按钮（小号） */
+.cfg-btn { padding: 3px 10px; font-size: 12px; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 .err { color: var(--danger); font-size: 12.5px; margin-top: 6px; }
@@ -659,7 +776,7 @@ onMounted(async () => {
 }
 .ipt:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: var(--primary); }
 .ipt[readonly] { background: var(--panel-2); color: var(--muted); }
-.ta { flex: 1; resize: vertical; min-height: 120px; line-height: 1.6; }
+.ta { flex: 0 0 auto; resize: vertical; min-height: 210px; line-height: 1.6; }
 .row2 { display: flex; gap: 6px; align-items: center; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }

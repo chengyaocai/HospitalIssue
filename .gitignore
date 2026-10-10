@@ -19,3 +19,11 @@ frontend/shots/
 
 # 日志
 *.log
+
+# 本地运行配置与密钥（含数据库密码 / PMIS-MCP Bearer token，禁止入库）
+backend/.env
+backend/Configs/mcp.json
+backend/Configs/wxp.json
+backend/Configs/backup/
+# 知识库为运行时个人数据，不入库
+backend/Configs/timesheet-kb.json

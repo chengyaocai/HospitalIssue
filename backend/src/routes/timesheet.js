@@ -41,10 +41,16 @@ function resolveCred(own) {
   return { userCode: '', password: '', source: 'none' };
 }
 
-/** 每次请求的工时上下文：个人配置（可能为 null）+ 生效凭据 */
+/** 个人 PMIS-MCP token：配置了 = 整条链路走本人 token（覆盖全局 mcp.json）；未配置 = null（行为不变） */
+function normAuthOverride(own) {
+  const t = String(own?.pmisToken || '').trim();
+  return t || null;
+}
+
+/** 每次请求的工时上下文：个人配置（可能为 null）+ 生效凭据 + 个人 token 覆盖 */
 async function tsContext(req) {
   const own = await getUserTsConfig({ userId: req.user.id, username: req.user.username });
-  return { own, cred: resolveCred(own) };
+  return { own, cred: resolveCred(own), auth: normAuthOverride(own) };
 }
 
 /** 医院→在建项目绑定合并：个人绑定覆盖同名医院，未配置的回落全局 */
@@ -88,6 +94,7 @@ router.get('/config', authenticate, async (req, res) => {
   }));
   return res.json({
     ...mergedDefaults(own),
+    kbMode: own?.kbMode === 'personal' ? 'personal' : 'all',
     inProgressStatus: list(ts.InProgressStatusList),
     timesheetTypes: pairs(ts.TimesheetTypes),
     costLineOptions: pairs(ts.CostLineOptions),
@@ -106,7 +113,7 @@ router.get('/my-config', authenticate, async (req, res) => {
     success: true,
     hasOwn: Boolean(own),
     usingGlobalAccount: cred.source === 'global',
-    config: publicTsConfig(own) || { wxpUserCode: '', hasPassword: false, defaults: {}, bindings: {}, updatedAt: null },
+    config: publicTsConfig(own) || { wxpUserCode: '', hasPassword: false, contents: [], kbMode: 'all', defaults: {}, bindings: {}, updatedAt: null },
   });
 });
 
@@ -128,6 +135,8 @@ router.put('/my-config', authenticate, async (req, res) => {
       {
         wxpUserCode: b.wxpUserCode,
         wxpPassword: b.wxpPassword,
+        kbMode: b.kbMode,
+        contents: b.contents,
         defaults: b.defaults,
         bindings: b.bindings,
       },
@@ -158,8 +167,7 @@ router.post('/my-config/test', authenticate, async (req, res) => {
 });
 
 // 我的医院列表（WXP 动态拉取 + 绑定合并；鉴权失败原子重登重试一次）
-// v1.18.46 起绑定生效优先级：**个人绑定 > 自动匹配（按医院名检索本人 PMIS 在建项目，项目名/客户名
-// 包含医院名即命中）> 系统默认（Configs 固定绑定，兜底）**，每项带 source=own|auto|sys|none
+// v1.18.46 起绑定生效优先级：**个人绑定 > 自动匹配（v1.18.49 起只按客户ID检索本人 PMIS 在建项目）> 系统默认（Configs 固定绑定，兜底）**，每项带 source=own|auto|sys|none
 // 供工时配置页标注来源；inProjectId/inProjectName 恒为「当前生效值」，工时登记页零改动直接受益。
 router.get('/hospitals', authenticate, async (req, res) => {
   try {
@@ -180,16 +188,13 @@ router.get('/hospitals', authenticate, async (req, res) => {
     });
     if (core.error) return res.json({ success: false, message: core.error });
 
-    // 锁外自动匹配（并行；单院失败静默回落，不拖垮整表）
+    // 锁外自动匹配（并行；单院失败静默跳过，不拖垮整表）
+    // v1.18.49：只按客户ID（hospitalCode = PMIS customer_id）检索，医院改名不受影响；不做医院名称模糊匹配。
     const localCfgs = mergedBindings(own);
     const autos = await Promise.all(core.hospitals.map(async (h) => {
       try {
-        const found = await searchPmisProjects(h.hospitalName);
-        if (!found.ok) return null;
-        const hit = found.items.find((p) => {
-          const name = String(h.hospitalName || '').trim();
-          return name && (p.inProjectName.includes(name) || p.customerName.includes(name));
-        });
+        const found = await searchPmisProjects({ customerId: h.hospitalCode });
+        const hit = found.ok ? (found.items[0] || null) : null; // 已按"执行中优先 + 项目ID倒序"排序，取第一个
         return hit ? { inProjectId: hit.inProjectId, inProjectName: hit.inProjectName } : null;
       } catch { return null; }
     }));
@@ -264,19 +269,25 @@ router.put('/server-config', authenticate, requirePlatformAdmin(), async (req, r
 
 // 某医院的在建项目候选（PMIS API 65 模糊检索；当前绑定的排最前 → 执行中 → 项目 ID 倒序）
 // —— 检索内核抽为 searchPmisProjects（v1.18.46）：/projects 与 /hospitals 的自动匹配共用
-async function searchPmisProjects(keyword) {
-  if (!keyword || !String(keyword).trim()) {
-    return { ok: false, error: '缺少检索关键字', items: [] };
+// v1.18.49 起支持按客户ID（customerId = WXP 医院编码 = PMIS customer_id）精确检索：
+// 医院中途改名不影响匹配，客户ID 恒定。keyword 与 customer_id 可同时传（交集）。
+async function searchPmisProjects({ keyword, customerId } = {}) {
+  const cid = parseInt(customerId, 10);
+  const kw = typeof keyword === 'string' ? keyword.trim() : '';
+  if (!kw && !(cid > 0)) {
+    return { ok: false, error: '缺少检索条件（客户ID / 关键字）', items: [] };
   }
   const userId = await getPmisUserId();
   if (!userId) return { ok: false, error: '获取 PMIS 用户 ID 失败（PMIS-MCP get_user_token 调用失败）', items: [] };
 
-  // keyword 匹配"在建项目名称 / 合同名称"；日期范围放宽到 2000 年，避免默认窗口漏掉老项目
-  const queryParams = JSON.stringify({
-    keyword,
+  // keyword 匹配"在建项目名称 / 合同名称"；customer_id 精确过滤客户；日期范围放宽到 2000 年，避免默认窗口漏掉老项目
+  const qp = {
     register_start_date: '2000-01-01',
     register_end_date: new Date().toISOString().slice(0, 10),
-  });
+  };
+  if (cid > 0) qp.customer_id = cid;
+  if (kw) qp.keyword = kw;
+  const queryParams = JSON.stringify(qp);
   const { rows, error } = await callPmisApi('65', { user_id: userId, query_params: queryParams });
   if (error) return { ok: false, error, items: [] };
 
@@ -300,7 +311,9 @@ async function searchPmisProjects(keyword) {
       customerName: pick(r, ['客户名称', '客户']),
       managerName: pick(r, ['项目经理', '项目负责人']),
       projectType: pick(r, ['项目类型']),
+      buildStatus: pick(r, ['在建状态']),
       executeStatus: pick(r, ['执行状态']),
+      raw: r, // PMIS 原始返回全字段透传，前端动态列展示
     });
   }
   // "执行"中的排前，再按项目 ID 倒序（新项目靠前）
@@ -313,21 +326,26 @@ router.get('/projects', authenticate, async (req, res) => {
   const cfgs = mergedBindings(own);
   let configuredId = 0;
   let configuredName = '';
-  let hospitalName = typeof req.query.hospitalName === 'string' ? req.query.hospitalName : '';
   if (req.query.hospitalCode && cfgs[req.query.hospitalCode]) {
     const cfg = cfgs[req.query.hospitalCode];
     configuredId = cfg.inProjectId;
     configuredName = cfg.inProjectName;
-    if (cfg.hospitalName) hospitalName = cfg.hospitalName;
   }
-  const keyword = typeof req.query.keyword === 'string' && req.query.keyword.trim()
-    ? req.query.keyword.trim() : (hospitalName || '').trim();
-  if (!keyword) {
-    return res.json({ success: false, message: '缺少 hospitalName / keyword，无法检索在建项目' });
+  // 显式 keyword（用户输入）优先；否则有 hospitalCode 时按客户ID检索；都不传才报错（不再按医院名称模糊匹配）
+  const explicitKeyword = typeof req.query.keyword === 'string' && req.query.keyword.trim()
+    ? req.query.keyword.trim() : '';
+  const hospitalCode = typeof req.query.hospitalCode === 'string' && req.query.hospitalCode.trim()
+    ? req.query.hospitalCode.trim() : '';
+  let found;
+  if (explicitKeyword) {
+    found = await searchPmisProjects({ keyword: explicitKeyword });
+  } else if (hospitalCode) {
+    found = await searchPmisProjects({ customerId: hospitalCode });
+  } else {
+    return res.json({ success: false, message: '缺少 hospitalCode / keyword，无法检索在建项目' });
   }
-
-  const found = await searchPmisProjects(keyword);
   if (!found.ok) return res.json({ success: false, message: found.error });
+  const keyword = explicitKeyword || `客户ID:${hospitalCode}`;
   const items = found.items.map((p) => ({ ...p, isConfigured: p.inProjectId === configuredId }));
   // 当前绑定的排最前，其次"执行"中的，再按项目 ID 倒序（新项目靠前）
   items.sort((a, b) => (Number(b.isConfigured) - Number(a.isConfigured))
@@ -655,5 +673,23 @@ router.get('/kb', authenticate, (req, res) => res.json(kb.kbAll()));
 router.get('/kb-random', authenticate, (req, res) => res.json(kb.kbRandom(parseInt(req.query.count, 10) || 3)));
 router.post('/kb-add', authenticate, (req, res) => res.json(kb.kbAdd(req.body?.content)));
 router.post('/kb-delete', authenticate, (req, res) => res.json(kb.kbDelete(req.body?.index)));
+
+// 随机内容池（按个人「知识库加载模式」取数）：
+//   all      = 个人内容池 + 全局知识库（去重合并）
+//   personal = 仅个人内容池
+// 工时填报界面的「随机填充」用这个接口，/kb-random 保持原样给全局场景。
+router.get('/contents-random', authenticate, async (req, res) => {
+  const { own } = await tsContext(req);
+  const mode = own?.kbMode === 'personal' ? 'personal' : 'all';
+  const seen = new Set();
+  const pool = [];
+  for (const x of [...(own?.contents || []), ...(mode === 'all' ? kb.kbAll().items : [])]) {
+    const t = String(x || '').trim();
+    if (t && !seen.has(t)) { seen.add(t); pool.push(t); }
+  }
+  const n = Math.max(1, Math.min(parseInt(req.query.count, 10) || 3, pool.length));
+  const items = pool.length ? [...pool].sort(() => Math.random() - 0.5).slice(0, n) : [];
+  return res.json({ success: true, mode, total: pool.length, items });
+});
 
 export default router;
