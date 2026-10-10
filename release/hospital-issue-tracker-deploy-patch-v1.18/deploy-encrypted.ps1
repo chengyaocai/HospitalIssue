@@ -63,6 +63,14 @@ function Robo($from, $to, $purge) {
 Robo (Join-Path $PatchRoot 'backend') (Join-Path $InstallDir 'backend') $false
 Robo (Join-Path $PatchRoot 'frontend\dist') (Join-Path $InstallDir 'frontend\dist') $true
 
+# Also copy the updated run-server.bat (auto-detects encrypted vs plaintext source)
+$runFrom = Join-Path $PatchRoot 'run-server.bat'
+$runTo = Join-Path $InstallDir 'run-server.bat'
+if (Test-Path $runFrom) {
+    Log "copy run-server.bat -> $runTo"
+    if (-not $DryRun) { Copy-Item -Path $runFrom -Destination $runTo -Force }
+}
+
 # --- 3. encrypt + purge (machine-bound; plaintext removed from disk) ---
 $SrcDir = Join-Path $InstallDir 'backend\src'
 $hasPlain = Get-ChildItem -Path $SrcDir -Filter '*.js' -Recurse -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.EndsWith('.enc') }
