@@ -1,0 +1,34 @@
+{
+  "DefaultTimesheetType": 2,
+  "DefaultCostLineId": 2,
+  "DefaultProcessType": 62,
+  "DefaultWorkHours": 8,
+  "TimesheetTypes": [
+    { "value": 2, "label": "实施-无计划" },
+    { "value": 1, "label": "服务" },
+    { "value": 6, "label": "专项" },
+    { "value": 99, "label": "管理" }
+  ],
+  "CostLineOptions": [
+    { "value": 2, "label": "实施" }
+  ],
+  "ProcessTypeOptions": [
+    { "value": 51, "label": "项目管理" },
+    { "value": 52, "label": "用户调研" },
+    { "value": 53, "label": "环境部署" },
+    { "value": 54, "label": "数据交付" },
+    { "value": 55, "label": "接口交付" },
+    { "value": 56, "label": "模板交付" },
+    { "value": 57, "label": "报表交付" },
+    { "value": 58, "label": "产研协作" },
+    { "value": 59, "label": "培训考核" },
+    { "value": 60, "label": "集成模拟" },
+    { "value": 61, "label": "巡检支持" },
+    { "value": 62, "label": "移交前运维" },
+    { "value": 64, "label": "业务参数配置" }
+  ],
+  "InProgressStatusList": [
+    "实施"
+  ],
+  "HospitalConfigs": {}
+}

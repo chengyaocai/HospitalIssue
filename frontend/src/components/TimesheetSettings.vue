@@ -21,6 +21,8 @@ const hasSavedPassword = ref(false);
 const wxpUserCode = ref('');
 const wxpPassword = ref(''); // 只写：留空 = 保留已存密码
 const defaults = ref({ timesheetType: '', costLineId: '', processType: '', workHours: '' });
+// 知识库加载模式：all = 个人内容池 + 全局知识库；personal = 仅个人内容池（随机填充取词范围）
+const kbMode = ref('all');
 
 const dicts = ref({ timesheetTypes: [], costLineOptions: [], processTypeOptions: [] });
 // 绑定表（v1.18.46）：来自 /hospitals（按用户动态拉取），行含 source=own|auto|sys|none
@@ -41,6 +43,34 @@ const projRow = ref(null);
 const projLoading = ref(false);
 const projList = ref([]);
 const projPick = ref('');
+const projSearch = ref('');
+// 搜索过滤：按项目 ID 或名称模糊匹配（不区分大小写）
+const projFiltered = computed(() => {
+  const kw = projSearch.value.trim().toLowerCase();
+  if (!kw) return projList.value;
+  return projList.value.filter((p) =>
+    String(p.inProjectId).toLowerCase().includes(kw) ||
+    String(p.inProjectName || '').toLowerCase().includes(kw) ||
+    (p.raw && JSON.stringify(p.raw).toLowerCase().includes(kw))
+  );
+});
+// 动态列：按 PMIS 原始返回字段的并集（保持首次出现顺序），核心 5 列排最前
+const PROJ_CORE_COLS = ['在建项目ID', '在建项目名称', '项目类型', '在建状态', '执行状态'];
+const projColumns = computed(() => {
+  const seen = new Set(PROJ_CORE_COLS);
+  const rest = [];
+  for (const p of projList.value) {
+    if (!p.raw || typeof p.raw !== 'object') continue;
+    for (const k of Object.keys(p.raw)) {
+      if (!seen.has(k)) { seen.add(k); rest.push(k); }
+    }
+  }
+  return [...PROJ_CORE_COLS, ...rest];
+});
+function cellText(v) {
+  if (v == null || v === '') return '—';
+  return String(v);
+}
 
 let toastTimer = null;
 function showToast(msg, kind = 'success') {
@@ -60,6 +90,7 @@ async function load() {
       hasSavedPassword.value = Boolean(mine.config?.hasPassword);
       wxpUserCode.value = mine.config?.wxpUserCode || '';
       wxpPassword.value = '';
+      kbMode.value = mine.config?.kbMode === 'personal' ? 'personal' : 'all';
       defaults.value = {
         timesheetType: mine.config?.defaults?.timesheetType ?? cfg.defaultTimesheetType ?? 2,
         costLineId: mine.config?.defaults?.costLineId ?? cfg.defaultCostLineId ?? 2,
@@ -138,6 +169,7 @@ async function save() {
     }
     const body = {
       wxpUserCode: wxpUserCode.value.trim(),
+      kbMode: kbMode.value === 'personal' ? 'personal' : 'all',
       defaults: {
         timesheetType: Number(defaults.value.timesheetType) || null,
         costLineId: Number(defaults.value.costLineId) || null,
@@ -172,6 +204,7 @@ function clearBinding(row) {
 async function openProjects(row) {
   projRow.value = row;
   projPick.value = row.inProjectId && row.source === 'own' ? String(row.inProjectId) : '';
+  projSearch.value = '';
   projModal.value = true;
   projLoading.value = true;
   projList.value = [];
@@ -273,8 +306,14 @@ onMounted(load);
           <label class="fld">默认工时（小时）
             <input v-model="defaults.workHours" class="ipt" type="number" min="0" max="24" step="0.5">
           </label>
+          <label class="fld">知识库加载模式
+            <select v-model="kbMode" class="ipt">
+              <option value="all">全部（个人内容池 + 全局知识库）</option>
+              <option value="personal">个人（仅个人内容池）</option>
+            </select>
+          </label>
         </div>
-        <div class="muted small" style="margin-top:8px">保存后打开「工时登记」时按你的默认值预填；此前显示的是系统默认值。</div>
+        <div class="muted small" style="margin-top:8px">保存后打开「工时登记」时按你的默认值预填；此前显示的是系统默认值。知识库加载模式决定「随机填充」的取词范围：个人 = 只用你配置的常用工时内容；全部 = 个人内容池 + 系统知识库合并。</div>
       </div>
     </div>
 
@@ -306,7 +345,7 @@ onMounted(load);
           </tbody>
         </table>
       </div>
-      <div class="muted small" style="margin-top:8px">「自动匹配」= 按医院名在<b>你本人</b>的 PMIS 在建项目中检索（项目名/客户名包含医院名即命中）；如匹配不准，用「选择项目」改为个人绑定（个人优先）。未匹配且无系统默认时不进批量填报。</div>
+      <div class="muted small" style="margin-top:8px">「自动匹配」= 按<b>医院客户ID</b>在你本人的 PMIS 在建项目中精确检索（医院中途改名不影响）；如匹配不准，用「选择项目」改为个人绑定（个人优先）。未匹配且无系统默认时不进批量填报。</div>
       <div class="rowbtn" style="margin-top:12px">
         <button class="btn primary" :disabled="saving || loading" @click="save">{{ saving ? '保存中...' : '保存我的工时配置' }}</button>
       </div>
@@ -341,14 +380,30 @@ onMounted(load);
           <b>选择在建项目 — {{ projRow?.hospitalName }}</b>
           <button class="btn ghost small" @click="projModal = false">关闭</button>
         </div>
+        <div class="proj-toolbar">
+          <input v-model="projSearch" class="ipt proj-search" type="search" placeholder="🔍 按项目 ID / 名称 / 任意字段搜索…">
+        </div>
         <div class="modal-body">
-          <div v-if="projLoading" class="muted">候选加载中...</div>
-          <div v-else-if="!projList.length" class="muted">没有检索到在建项目候选（按医院名模糊匹配 PMIS，可稍后重试）</div>
-          <label v-for="p in projList" :key="p.inProjectId" class="proj-row" :class="{ picked: String(p.inProjectId) === String(projPick) }">
-            <input type="radio" name="proj" :value="String(p.inProjectId)" v-model="projPick">
-            <span class="proj-name">{{ p.inProjectId }} · {{ p.inProjectName }}</span>
-            <span class="muted small">{{ p.executeStatus || '—' }}<template v-if="p.isConfigured"> · 当前绑定</template></span>
-          </label>
+          <div v-if="projLoading" class="muted" style="padding:8px 0">候选加载中...</div>
+          <div v-else-if="!projList.length" class="muted" style="padding:8px 0">没有检索到在建项目候选（按医院名模糊匹配 PMIS，可稍后重试）</div>
+          <div v-else-if="!projFiltered.length" class="muted" style="padding:8px 0">未找到匹配「{{ projSearch }}」的项目，换个关键词试试</div>
+          <table v-else class="proj-table">
+            <thead>
+              <tr>
+                <th class="th-radio"></th>
+                <th v-for="c in projColumns" :key="c" :class="{ 'th-name': c === '在建项目名称' }">{{ c }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in projFiltered" :key="p.inProjectId" class="proj-row" :class="{ picked: String(p.inProjectId) === String(projPick) }" @click="projPick = String(p.inProjectId)">
+                <td class="td-radio"><input type="radio" name="proj" :value="String(p.inProjectId)" v-model="projPick" @click.stop></td>
+                <td v-for="c in projColumns" :key="c" :class="{ 'td-name': c === '在建项目名称' }" :title="cellText(p.raw?.[c])">
+                  <template v-if="c === '在建项目名称'">{{ cellText(p.raw?.[c] || p.inProjectName) }}<template v-if="p.isConfigured"> ✓</template></template>
+                  <template v-else>{{ cellText(p.raw?.[c]) }}</template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
         <div class="modal-foot">
           <button class="btn primary" :disabled="!projPick" @click="confirmProject">确定</button>
@@ -383,12 +438,21 @@ onMounted(load);
 .kv { font-size: 13px; padding: 7px 10px; background: var(--panel, #f5f7fb); border: 1px solid var(--border, #e5eaf2); border-radius: 8px; font-family: Consolas, Menlo, monospace; word-break: break-all; color: var(--text); min-height: 14px; }
 .btn.small { padding: 4px 10px; font-size: 12px; }
 .modal-mask { position: fixed; inset: 0; background: rgba(15, 34, 74, .45); z-index: 70; display: flex; align-items: center; justify-content: center; }
-.modal { background: var(--card, #fff); border-radius: 12px; width: min(680px, 92vw); max-height: 82vh; display: flex; flex-direction: column; box-shadow: 0 18px 50px rgba(15, 34, 74, .25); }
-.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border, #e5eaf2); }
-.modal-body { padding: 8px 16px; overflow-y: auto; }
-.modal-foot { padding: 12px 16px; border-top: 1px solid var(--border, #e5eaf2); display: flex; justify-content: flex-end; }
-.proj-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
-.proj-row:hover { background: rgba(59, 116, 246, .08); }
-.proj-row.picked { background: rgba(59, 116, 246, .14); }
-.proj-name { flex: 1; }
+.modal { background: var(--card, #fff); border-radius: 12px; width: min(1120px, 96vw); max-height: 84vh; display: flex; flex-direction: column; box-shadow: 0 18px 50px rgba(15, 34, 74, .25); }
+.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border, #e5eaf2); }
+.modal-body { padding: 0 18px 14px; overflow: auto; }
+/* 搜索工具条：固定在滚动区外，不随列表滚动/悬浮；搜索框拉满整行 */
+.proj-toolbar { padding: 12px 18px 10px; flex: none; }
+.proj-search { width: 100%; height: 34px; font-size: 13px; }
+.proj-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.proj-table th, .proj-table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border, #edf1f7); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj-table thead th { position: sticky; top: 0; background: #f6f8fb; color: #475569; font-weight: 600; font-size: 12.5px; z-index: 1; border-bottom: 1px solid var(--border-strong, #d4dce8); }
+.proj-table tbody tr:nth-child(even) td { background: #fafbfd; }
+.proj-table th.radio, .proj-table td.radio { width: 36px; text-align: center; padding-right: 4px; }
+.proj-table td.radio input { margin: 0; vertical-align: middle; cursor: pointer; }
+.proj-table tbody tr { cursor: pointer; transition: background .12s; }
+.proj-table tbody tr:hover td { background: rgba(59, 116, 246, .07); }
+.proj-table tbody tr.picked td { background: rgba(59, 116, 246, .13); }
+.proj-table th.th-name, .proj-table td.td-name { white-space: normal; word-break: break-all; min-width: 320px; width: 34%; }
+.modal-foot { padding: 12px 18px; border-top: 1px solid var(--border, #e5eaf2); display: flex; justify-content: flex-end; }
 </style>

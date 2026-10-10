@@ -263,10 +263,10 @@ export async function queryDraftsForHospital({ cred, hospitalId, hospitalName, w
     else if (inProgressStatus.includes(statusName)) inProgress.push(item);
   }
 
-  const lines = [`【AI工时】${hName}运维支持工作：`];
+  // v1.18.48：只保留编号任务行，去掉「xx运维支持工作：」「【当天完成】(N项)」「累计处理N项底稿」等修饰行
+  const lines = [];
   let idx = 1;
   if (closedToday.length > 0) {
-    lines.push(`【当天完成】(${closedToday.length}项)`);
     for (const draft of closedToday) {
       const title = pickTitle(draft);
       if (title) lines.push(`${idx++}.${title}(已关闭)`);
@@ -274,14 +274,13 @@ export async function queryDraftsForHospital({ cred, hospitalId, hospitalName, w
   }
   if (inProgress.length > 0 && includeInProgress) {
     const shown = inProgress.slice(0, 3); // 进行中仅取前 3 项，避免内容过长
-    lines.push(`【进行中】(${inProgress.length}项，展示前${shown.length}项)`);
     for (const draft of shown) {
       const title = pickTitle(draft);
       const status = typeof draft.statusName === 'string' ? draft.statusName : '';
       if (title) lines.push(`${idx++}.${title}(${status})`);
     }
   }
-  lines.push(`累计处理${mine.length}项底稿`);
+  if (lines.length) lines.unshift('【AI工时】'); // 默认带【AI工时】标记（不再拼接医院名后缀）
 
   const topDrafts = closedToday.concat(inProgress).map((m) => ({
     title: typeof m.title === 'string' ? m.title : '',
@@ -294,7 +293,7 @@ export async function queryDraftsForHospital({ cred, hospitalId, hospitalName, w
     mineCount: mine.length,
     closedTodayCount: closedToday.length,
     inProgressCount: inProgress.length,
-    workContent: lines.join('\n') + '\n',
+    workContent: lines.length ? lines.join('\n') + '\n' : '',
     topDrafts,
   };
 }

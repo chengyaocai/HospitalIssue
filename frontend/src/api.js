@@ -468,6 +468,8 @@ export const api = {
   tsBatchSubmit: (entries) => req('/timesheet/batch-submit', { method: 'POST', body: JSON.stringify(entries) }),
   tsKb: () => req('/timesheet/kb'),
   tsKbRandom: (count = 3) => req('/timesheet/kb-random' + qs({ count })),
+  // 随机内容池（按个人「知识库加载模式」：all=个人+全局；personal=仅个人）
+  tsContentsRandom: (count = 3) => req('/timesheet/contents-random' + qs({ count })),
   tsKbAdd: (data) => req('/timesheet/kb-add', { method: 'POST', body: JSON.stringify(data) }),
   tsKbDelete: (data) => req('/timesheet/kb-delete', { method: 'POST', body: JSON.stringify(data) }),
   // 工时配置（v1.18.43）：每个登录用户自己的配置记录（个人 WXP 账号/默认值/医院绑定）
