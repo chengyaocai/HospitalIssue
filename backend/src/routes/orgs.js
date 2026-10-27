@@ -10,6 +10,7 @@ import {
   getOrgStore, setMemberRole, removeMember, ensureOrgs, PLATFORM_ADMIN_ROLE,
 } from '../orgs/index.js';
 import { getFileStore } from '../files/index.js';
+import { getSvcStore } from '../svcmanage/index.js';
 import { removeStoredFiles } from '../services/uploads.js';
 
 const router = express.Router();
@@ -131,6 +132,12 @@ router.delete('/:id', async (req, res) => {
       }
     } catch (e) {
       console.error('[orgs] 清理机构文件失败：', e && e.message ? e.message : e);
+    }
+    // 业务服务管理（v1.18.82）：级联清理该机构登记的服务记录，防跨机构孤儿数据。
+    try {
+      await (await getSvcStore()).removeByOrg(req.params.id);
+    } catch (e) {
+      console.error('[orgs] 清理机构业务服务失败：', e && e.message ? e.message : e);
     }
     await audit({
       username: req.user.username,

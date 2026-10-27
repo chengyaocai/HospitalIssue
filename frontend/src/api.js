@@ -98,6 +98,7 @@ export const PERM_MENUS = [
   { key: 'audited', label: '审核通过' },
   { key: 'kb', label: '运维知识库' },
   { key: 'files', label: '文件管理' },
+  { key: 'svcmanage', label: '业务服务管理' },
   { key: 'chat', label: '聊天' },
   { key: 'users', label: '用户管理' },
   { key: 'audit', label: '操作日志' },
@@ -146,8 +147,10 @@ export const PERM_ACTIONS = [
   // 文件管理（v1.18.70）：上传/删除为功能权限，可见范围由文件的 visibility 字段服务端判定
   { key: 'file.upload', label: '上传文件', menu: 'files' },
   { key: 'file.delete', label: '删除文件', menu: 'files' },
+  // 业务服务管理（v1.18.82）：查看随菜单，新增/编辑/删除为功能权限
+  { key: 'service.manage', label: '服务维护（新增/编辑/删除）', menu: 'svcmanage' },
 ];
-export const MENU_ORDER = ['dashboard', 'issues', 'audited', 'kb', 'files', 'chat', 'users', 'audit', 'settings', 'schedule', 'timesheet', 'tsconfig', 'wxpdraft', 'tfsquery', 'pmisquery', 'changerequest', 'golive'];
+export const MENU_ORDER = ['dashboard', 'issues', 'audited', 'kb', 'files', 'svcmanage', 'chat', 'users', 'audit', 'settings', 'schedule', 'timesheet', 'tsconfig', 'wxpdraft', 'tfsquery', 'pmisquery', 'changerequest', 'golive'];
 
 // 内置角色（与后端 BUILTIN_ROLES 一致）：不可删除，仅可改名。
 export const BUILTIN_ROLES = [
@@ -183,7 +186,8 @@ export function defaultRolePermissions(roleKey) {
   actions['chat.use'] = true;
   // 值班表 / 审核通过 / 运维知识库 / 聊天 / 工时登记 / 工时配置默认对登记员等也可见（与原「全员常显」一致），管理员可关闭。
   // 文件管理（v1.18.70）：默认可见但不可上传（file.upload 默认 false），部署即「只读资料库」。
-  return { menus: ['dashboard', 'issues', 'audited', 'kb', 'files', 'schedule', 'chat', 'timesheet', 'tsconfig', 'wxpdraft', 'tfsquery', 'pmisquery', 'changerequest', 'golive'], actions };
+  // 业务服务管理（v1.18.82）：默认可见但不可维护（service.manage 默认 false）。
+  return { menus: ['dashboard', 'issues', 'audited', 'kb', 'files', 'svcmanage', 'schedule', 'chat', 'timesheet', 'tsconfig', 'wxpdraft', 'tfsquery', 'pmisquery', 'changerequest', 'golive'], actions };
 }
 
 // 前端兜底默认权限（仅在 /api/config 取不到时使用）
@@ -466,6 +470,12 @@ export const api = {
   // 编辑登记信息（v1.18.77）：改可见范围/备注；链接行还可改名称与 URL。
   // 权限与删除一致：本人或 file.delete。
   editFile: async (id, payload) => req(`/files/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+
+  // 业务服务管理（v1.18.82）：医院系统/服务台账（地址/账号/密码/路径/用途）
+  listServices: (params = {}) => req('/services' + qs(params)),
+  createService: (data) => req('/services', { method: 'POST', body: JSON.stringify(data) }),
+  updateService: (id, data) => req('/services/' + id, { method: 'PUT', body: JSON.stringify(data) }),
+  removeService: (id) => req('/services/' + id, { method: 'DELETE' }),
 
   // 消息通知
   listNotifications: (params = {}) => req('/notifications' + qs(params)),

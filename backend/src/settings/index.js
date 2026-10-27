@@ -121,6 +121,10 @@ const NEW_MENU_KEYS_V3 = ['timesheet'];
 const MIGRATED_MENUS_FLAG_V4 = 'perm_menus_migrated_v4';
 const NEW_MENU_KEYS_V4 = ['tsconfig'];
 
+// —— v1.18.82 一次性存量迁移（v5）：业务服务管理菜单 key 'svcmanage' ——
+// 与 v3/v4 同模式：全局与各机构各自跑一次、幂等；管理员之后手动移除不会被再次加回。
+const MIGRATED_MENUS_FLAG_V5 = 'perm_menus_migrated_v5';
+
 // 合并：存储覆盖 > 环境变量默认
 // orgId 缺省（null/undefined）= 读取遗留的全局设置（单机构 / 升级前行为不变）；
 // 传入 orgId 时读取该机构自己的设置（多机构模式）。
@@ -208,6 +212,24 @@ export async function getSettings(orgId) {
       changedV4
         ? { permissions: JSON.stringify(permissions), [MIGRATED_MENUS_FLAG_V4]: '1' }
         : { [MIGRATED_MENUS_FLAG_V4]: '1' },
+      orgId,
+    );
+  }
+
+  // —— v1.18.82 迁移（v5）：补 'svcmanage' 菜单 key（业务服务管理，全局与各机构各自跑一次，幂等）——
+  // 仅补菜单可见性；service.manage 动作权限不受影响（存量角色按缺省回落为 false，仅管理员可维护）。
+  if (!stored[MIGRATED_MENUS_FLAG_V5]) {
+    let changedV5 = false;
+    for (const r of roles) {
+      const p = permissions[r.key];
+      if (!p) continue;
+      const set = new Set(Array.isArray(p.menus) ? p.menus : []);
+      if (!set.has('svcmanage')) { set.add('svcmanage'); p.menus = [...set]; changedV5 = true; }
+    }
+    await store.update(
+      changedV5
+        ? { permissions: JSON.stringify(permissions), [MIGRATED_MENUS_FLAG_V5]: '1' }
+        : { [MIGRATED_MENUS_FLAG_V5]: '1' },
       orgId,
     );
   }

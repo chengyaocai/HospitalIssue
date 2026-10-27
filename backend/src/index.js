@@ -17,6 +17,7 @@ import orgsRouter from './routes/orgs.js';
 import timesheetRouter from './routes/timesheet.js';
 import aiskillRouter from './routes/aiskill.js';
 import filesRouter from './routes/files.js';
+import servicesRouter from './routes/services.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,6 +43,7 @@ app.use('/api/orgs', orgsRouter);
 app.use('/api/timesheet', timesheetRouter);
 app.use('/api/aiskill', aiskillRouter);
 app.use('/api/files', filesRouter);
+app.use('/api/services', servicesRouter);
 app.use('/api', problemsRouter);
 
 // 生产环境：托管前端构建产物（frontend/dist）

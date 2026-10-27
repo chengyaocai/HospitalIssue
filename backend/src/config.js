@@ -27,6 +27,8 @@ export const config = {
   scheduleDevPath: process.env.SCHEDULE_DEV_PATH || path.join(__dirname, '..', 'data', 'schedules.json'),
   // 文件管理（v1.18.70）：dev 驱动落 JSON 文件；生产落表 dbo.app_file
   filesDevPath: process.env.FILES_DEV_PATH || path.join(__dirname, '..', 'data', 'files.json'),
+  // 业务服务管理（v1.18.82）：dev 驱动落 JSON 文件；生产落表 dbo.app_service
+  svcDevPath: process.env.SVC_DEV_PATH || path.join(__dirname, '..', 'data', 'services.json'),
   // 按用户隔离的工时配置（v1.18.43，dev 驱动落 JSON 文件；生产落表 app_user_ts_config）
   timesheetUserDevPath: process.env.TIMESHEET_USER_DEV_PATH || path.join(__dirname, '..', 'data', 'timesheet-user.json'),
   // 多机构（v1.18）：机构 / 成员关系（dev 驱动落 JSON 文件），以及首次启动自动创建的默认机构名称。

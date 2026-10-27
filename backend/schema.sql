@@ -348,3 +348,34 @@ GO
 --      老库升级：应用启动时由 orgs/ensureOrgs 执行一次性引导 ——
 --      若系统内尚无任何平台管理员，则把最早的一个 admin 角色用户提升为平台管理员，
 --      避免升级后「无人能管理多机构」。此处不再重复 UPDATE，以免把普通管理员一并提升。
+
+-- ============================================================
+-- 10) 业务服务管理（v1.18.82）
+--     登记医院各系统/服务的地址、账号、密码、路径、用途等信息；
+--     应用启动时 svcmanage/mssqlSvcStore 也会自动建表，正常升级无需手工执行。
+-- ============================================================
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = N'app_service')
+BEGIN
+    CREATE TABLE dbo.app_service (
+        id         BIGINT IDENTITY(1,1) PRIMARY KEY,
+        org_id     BIGINT NOT NULL DEFAULT 1,        -- 数据归属机构（多机构行级隔离）
+        name       NVARCHAR(255) NOT NULL,           -- 服务名称（必填）
+        svc_type   NVARCHAR(50)  NOT NULL DEFAULT N'未指定',  -- 服务类型（固定下拉表）
+        hospital   NVARCHAR(255) NOT NULL DEFAULT N'',          -- 医院（可空=通用）
+        vendor     NVARCHAR(255) NOT NULL DEFAULT N'',          -- 厂家
+        username   NVARCHAR(255) NOT NULL DEFAULT N'',          -- 账号
+        password   NVARCHAR(255) NOT NULL DEFAULT N'',          -- 密码（内网运维台账，明文存，界面默认掩码）
+        env        NVARCHAR(32)  NOT NULL DEFAULT N'未指定',    -- 环境：未指定/生产/灰度/测试/开发
+        sort       INT NOT NULL DEFAULT 0,           -- 序号（升序展示）
+        url        NVARCHAR(1000) NOT NULL DEFAULT N'',         -- 服务地址（http(s) 等）
+        path       NVARCHAR(1000) NOT NULL DEFAULT N'',         -- 路径（接口路径或部署路径）
+        remark     NVARCHAR(500) NOT NULL DEFAULT N'',          -- 备注（用途等）
+        enabled    BIT NOT NULL DEFAULT 1,           -- 是否启用
+        created_by NVARCHAR(100) NOT NULL DEFAULT N'',
+        created_at DATETIME NOT NULL DEFAULT GETDATE(),
+        updated_at DATETIME NULL
+    );
+    CREATE INDEX ix_app_service_org ON dbo.app_service (org_id, sort, id);
+END
+GO
+
